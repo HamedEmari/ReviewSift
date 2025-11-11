@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Steam Game Review Synthesizer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --bg:#0f172a; --card:#111827; --ink:#e5e7eb; --muted:#94a3b8; --accent:#38bdf8; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--ink);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial;
+    }
+    header {
+      padding: 24px; border-bottom: 1px solid #1f2937;
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    }
+    header h1 { margin: 0; font-size: 20px; letter-spacing: 0.2px; }
+    .search {
+      display: flex; gap: 8px; width: 100%; max-width: 720px;
+    }
+    .search input {
+      flex: 1; padding: 12px 14px; border-radius: 12px; border: 1px solid #1f2937;
+      background: #0b1220; color: var(--ink); outline: none;
+    }
+    .search button {
+      padding: 12px 16px; border-radius: 12px; border: 0; cursor: pointer;
+      background: var(--accent); color: #041017; font-weight: 600;
+    }
+    main { padding: 24px; display: grid; gap: 24px; max-width: 1100px; margin: 0 auto; }
+    .row { display: grid; gap: 16px; grid-template-columns: 1fr; }
+    @media(min-width: 900px){ .row { grid-template-columns: 1fr 1fr; } }
+
+    .card {
+      background: var(--card); border: 1px solid #1f2937; border-radius: 16px; padding: 16px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+    }
+
+    .game-list { display: grid; gap: 10px; }
+    .game {
+      display: grid; grid-template-columns: 64px 1fr auto; gap: 12px; align-items: center;
+      padding: 10px; background: #0b1220; border: 1px solid #1f2937; border-radius: 12px; cursor: pointer;
+    }
+    .game:hover { border-color: var(--accent); }
+    .game img { width: 64px; height: 24px; object-fit: cover; border-radius: 6px; }
+    .muted { color: var(--muted); font-size: 12px; }
+    .pill {
+      display: inline-block; padding: 6px 10px; border-radius: 999px; background: #0b1220; border: 1px solid #1f2937;
+      font-size: 12px; margin: 4px 4px 0 0;
+    }
+
+    .stat {
+      display: grid; gap: 4px; padding: 12px; border: 1px solid #1f2937; border-radius: 12px; background: #0b1220;
+    }
+    .stat .k { font-size: 12px; color: var(--muted); }
+    .stat .v { font-size: 18px; font-weight: 700; }
+
+    .proscons { display: grid; gap: 12px; }
+    .proscons h3 { margin: 0 0 8px; font-size: 16px; }
+    ul { margin: 0; padding-left: 18px; }
+    li { margin: 6px 0; line-height: 1.35; }
+    .pos { color: #86efac; }
+    .neg { color: #fca5a5; }
+    .small { font-size: 12px; color: var(--muted); }
+    .section-title { font-weight: 700; margin-top: 0; margin-bottom: 10px; font-size: 18px; }
+    .divider { height: 1px; background: #1f2937; margin: 8px 0 16px; }
+    .samples { display: grid; gap: 10px; }
+    .sample {
+      border: 1px solid #1f2937; background: #0b1220; border-radius: 12px; padding: 12px;
+    }
+    .badge { font-size: 11px; padding: 3px 8px; border-radius: 999px; border: 1px solid #1f2937; }
+    .badge.pos { border-color:#14532d; background:#052e16; color:#86efac; }
+    .badge.neg { border-color:#7f1d1d; background:#2a0b0b; color:#fca5a5; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🎮 Steam Review Synthesizer</h1>
+    <div class="search">
+      <input id="query" placeholder="Type a Steam game (e.g., Baldur's Gate 3)" />
+      <button id="searchBtn">Search</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="card">
+      <h2 class="section-title">Search Results</h2>
+      <div id="results" class="game-list"></div>
+      <div id="empty" class="muted">Start by searching a game. Click a result to see the synthesized summary.</div>
+    </div>
+
+    <div class="row">
+      <div class="card">
+        <h2 class="section-title">Overview</h2>
+        <div id="overview"></div>
+      </div>
+
+      <div class="card">
+        <h2 class="section-title">Top Keywords</h2>
+        <div id="keywords"></div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="card">
+        <h2 class="section-title">Highlights (Pros)</h2>
+        <div id="pros" class="proscons"></div>
+      </div>
+      <div class="card">
+        <h2 class="section-title">Watch-outs (Cons)</h2>
+        <div id="cons" class="proscons"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="section-title">Recent Review Samples</h2>
+      <div id="samples" class="samples"></div>
+    </div>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>
