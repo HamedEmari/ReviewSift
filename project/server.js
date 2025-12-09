@@ -16,7 +16,171 @@ app.use(express.static(path.join(__dirname, "public")));
 
 const PORT = process.env.PORT || 3000;
 
-/*Search games by name */
+/* ------------------------------ Helpers ------------------------------ */
+
+async function fetchJson(url) {
+  const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
+  if (!r.ok) {
+    const body = await r.text().catch(() => "");
+    const err = new Error(`HTTP ${r.status} from ${url}`);
+    err.httpStatus = r.status;
+    err.body = body;
+    throw err;
+  }
+  return r.json();
+}
+
+function verdictFromPositivity(p) {
+  if (p >= 0.85) return "Overwhelmingly Positive";
+  if (p >= 0.75) return "Very Positive";
+  if (p >= 0.65) return "Mostly Positive";
+  if (p >= 0.55) return "Somewhat Positive";
+  if (p >= 0.45) return "Mixed";
+  if (p >= 0.35) return "Somewhat Negative";
+  if (p >= 0.25) return "Mostly Negative";
+  return "Very Negative";
+}
+
+function tokenize(text) {
+  return (text || "")
+    .toLowerCase()
+    .replace(/https?:\/\/\S+/g, " ")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length >= 3 && w.length <= 24);
+}
+
+function topTermsFromReviews(reviews, limit = 15) {
+  const stop = new Set([
+    "this","that","with","have","game","play","just","like","you","your","for","and","the","are",
+    "but","not","was","its","they","them","from","out","get","too","very","all","can","cant",
+    "still","really","more","when","what","been","one","time","much","after","before","into"
+  ]);
+
+  const freq = new Map();
+  for (const r of reviews) {
+    for (const w of tokenize(r.review)) {
+      if (stop.has(w)) continue;
+      freq.set(w, (freq.get(w) || 0) + 1);
+    }
+  }
+
+  return [...freq.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([w]) => w);
+}
+
+function heuristicSummary(all) {
+  const posCount = all.filter((r) => r.voted_up).length;
+  const positivity = all.length ? posCount / all.length : 0;
+
+  const avgPlaytime =
+    all.length
+      ? all.reduce((acc, r) => acc + (r.author?.playtime_forever || 0), 0) /
+        all.length /
+        60
+      : 0;
+
+  const positives = all.filter((r) => r.voted_up);
+  const negatives = all.filter((r) => !r.voted_up);
+
+  const posKeywords = topTermsFromReviews(positives, 8);
+  const negKeywords = topTermsFromReviews(negatives, 8);
+  const topKeywords = topTermsFromReviews(all, 18);
+
+  const pros = posKeywords.slice(0, 6).map((k) => `Players frequently mention: ${k}`);
+  const cons = negKeywords.slice(0, 6).map((k) => `Common complaint around: ${k}`);
+
+  const themes = [...new Set(topKeywords.slice(0, 10))];
+
+  return {
+    overall: `${Math.round(positivity * 100)}% positive (${posCount}/${all.length})`,
+    verdict: verdictFromPositivity(positivity),
+    positivity,
+    playtimeAvgHrs: Math.round(avgPlaytime * 10) / 10,
+    pros,
+    cons,
+    themes,
+    topKeywords
+  };
+}
+
+function safeJson(txt) {
+  try {
+    const raw = (txt || "").trim();
+
+    const noFences = raw
+      .replace(/^```(?:json)?/i, "")
+      .replace(/```$/i, "")
+      .trim();
+
+    const first = noFences.indexOf("{");
+    const last = noFences.lastIndexOf("}");
+    const sliced =
+      first !== -1 && last !== -1 && last > first
+        ? noFences.slice(first, last + 1)
+        : noFences;
+
+    return JSON.parse(sliced);
+  } catch {
+    return null;
+  }
+}
+
+function buildBatchPrompt(reviews, batchIndex, totalBatches) {
+  return [
+    `You are analyzing Steam user reviews for a video game (batch ${batchIndex} of ${totalBatches}).`,
+    `Each line is one review with a header like: [Recommended|Not Recommended | Helpful:N | Playtime:Nh] text...`,
+    ``,
+    `Return ONLY JSON (no markdown, no commentary) with this schema:`,
+    `{
+      "positivity": number,
+      "pros": string[],
+      "cons": string[],
+      "themes": string[],
+      "topKeywords": string[],
+      "avgPlaytimeHoursObserved": number
+    }`,
+    ``,
+    `REVIEWS:\n${reviews.join("\n")}`
+  ].join("\n");
+}
+
+function buildMergePrompt(partials, meta) {
+  return [
+    `You are merging batch summaries of Steam game reviews into one final summary.`,
+    `Total reviews fetched: ${meta.totalCount}. Game appId: ${meta.appId}.`,
+    ``,
+    `INPUT_PARTIALS_JSON = ${JSON.stringify(partials)}`,
+    ``,
+    `Return ONLY JSON (no markdown, no commentary) with this schema:`,
+    `{
+      "overall": string,
+      "verdict": string,
+      "positivity": number,
+      "playtimeAvgHrs": number,
+      "pros": string[],
+      "cons": string[],
+      "themes": string[],
+      "topKeywords": string[]
+    }`,
+    ``,
+    `Verdict scale:
+      - "Overwhelmingly Positive" (>=0.85)
+      - "Very Positive"          (>=0.75)
+      - "Mostly Positive"        (>=0.65)
+      - "Somewhat Positive"      (>=0.55)
+      - "Mixed"                  (>=0.45)
+      - "Somewhat Negative"      (>=0.35)
+      - "Mostly Negative"        (>=0.25)
+      - "Very Negative"          (<0.25)`
+  ].join("\n");
+}
+
+/* ------------------------------ Routes ------------------------------ */
+
+/* Search games by name */
 app.get("/api/search", async (req, res) => {
   try {
     const term = (req.query.term || "").toString().trim();
@@ -26,8 +190,7 @@ app.get("/api/search", async (req, res) => {
       term
     )}&l=english&cc=US`;
 
-    const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
-    const data = await r.json();
+    const data = await fetchJson(url);
 
     const results = (data.items || []).map((it) => ({
       appid: it.id,
@@ -39,93 +202,66 @@ app.get("/api/search", async (req, res) => {
 
     res.json({ results });
   } catch (err) {
-    console.error(err);
+    console.error("Search failed:", err);
     res.status(500).json({ error: "Search failed." });
   }
 });
 
-/** Fetch recent reviews, then ask Gemini to synthesize them */
+/* Fetch reviews, then ask Gemini to synthesize them */
 app.get("/api/reviews", async (req, res) => {
   try {
     const appId = req.query.appId?.toString();
     const max = Math.min(parseInt(req.query.num || "200", 10), 1000);
     if (!appId) return res.status(400).json({ error: "Missing appId." });
 
-    // Pull recent reviews from Steam
+    const allowedLangs = new Set(["english", "spanish", "schinese", "portuguese", "russian", "all"]);
+    const langRaw = (req.query.lang || "english").toString().trim().toLowerCase();
+    const lang = allowedLangs.has(langRaw) ? langRaw : "english";
+
+    // -------- 1) Pull reviews from Steam  --------
     let cursor = "*";
     let all = [];
+
     while (all.length < max) {
-      const url = `https://store.steampowered.com/appreviews/${appId}?json=1&filter=recent&language=all&day_range=365&review_type=all&purchase_type=all&num_per_page=100&cursor=${encodeURIComponent(
+      const url = `https://store.steampowered.com/appreviews/${appId}?json=1&filter=recent&language=${encodeURIComponent(
+        lang
+      )}&day_range=365&review_type=all&purchase_type=all&num_per_page=100&cursor=${encodeURIComponent(
         cursor
       )}`;
-      const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
-      const data = await r.json();
 
-      const chunk = data?.reviews || [];
-      if (!chunk.length) break;
+      const data = await fetchJson(url);
 
-      all = all.concat(chunk);
-      cursor = data.cursor || cursor;
+      if (!data || data.success !== 1) break;
 
-      if (chunk.length < 100) break; // end of pages
+      const rawChunk = data.reviews || [];
+
+      // Force language filtering ourselves (Steam includes reviews[].language)
+      const chunk =
+        lang === "all"
+        ? rawChunk
+        : rawChunk.filter((r) => (r.language || "").toLowerCase() === lang);
+
+        if (!chunk.length) {
+
+        const nextCursor = data.cursor || cursor;
+        if (nextCursor === cursor) break;
+        cursor = nextCursor;
+        continue;
     }
 
-    // Keep a deterministic slice so prompts are stable
+    all = all.concat(chunk);
+
+
+
+      const nextCursor = data.cursor || cursor;
+      if (nextCursor === cursor) break;
+      cursor = nextCursor;
+
+      if (chunk.length < 100) break;
+    }
+
     all = all.slice(0, max);
 
-    // Prepare plain texts for the model (trim super long ones)
-    const toText = (rv) =>
-      `[${rv.voted_up ? "Recommended" : "Not Recommended"} | Helpful:${rv.votes_up} | Playtime:${Math.round(
-        (rv.author?.playtime_forever || 0) / 60
-      )}h] ${rv.review || ""}`.slice(0, 1400);
-
-    // Cap raw token load: batch reviews 
-    const reviewTexts = all.map(toText);
-    const batches = [];
-    const batchSize = 60; 
-    for (let i = 0; i < reviewTexts.length; i += batchSize) {
-      batches.push(reviewTexts.slice(i, i + batchSize));
-    }
-
-    // Initialize Gemini
-    const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
-
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-
-
-    // structured JSON
-    const partials = [];
-    for (const [idx, batch] of batches.entries()) {
-      const prompt = buildBatchPrompt(batch, idx + 1, batches.length);
-      const resp = await model.generateContent(prompt);
-      const txt = resp.response.text();
-      const json = safeJson(txt);
-      if (json) partials.push(json);
-    }
-
-    // merge batches
-    const mergePrompt = buildMergePrompt(partials, {
-      totalCount: all.length,
-      appId
-    });
-    const mergeResp = await model.generateContent(mergePrompt);
-    const merged = safeJson(mergeResp.response.text());
-
-    // Fallback 
-    const summary =
-      merged ||
-      {
-        overall: "Summary unavailable",
-        verdict: "Unknown",
-        positivity: null,
-        playtimeAvgHrs: null,
-        pros: [],
-        cons: [],
-        themes: [],
-        topKeywords: []
-      };
-
-    // Also return a few samples for the UI
     const sample = all.slice(0, 12).map((r) => ({
       voted_up: r.voted_up,
       votes_up: r.votes_up,
@@ -134,83 +270,87 @@ app.get("/api/reviews", async (req, res) => {
       playtime_hours: Math.round((r.author?.playtime_forever || 0) / 60)
     }));
 
-    res.json({ count: all.length, appId, summary, sample });
+    if (!all.length) {
+      return res.json({
+        count: 0,
+        appId,
+        lang,
+        summary: {
+          overall: "No reviews returned by Steam for this language.",
+          verdict: "Unknown",
+          positivity: null,
+          playtimeAvgHrs: null,
+          pros: [],
+          cons: [],
+          themes: [],
+          topKeywords: []
+        },
+        sample: []
+      });
+    }
+
+    // -------- 2) Local fallback summary --------
+    const fallback = heuristicSummary(all);
+
+    // -------- 3) Optional Gemini synthesis --------
+    const key = (process.env.GOOGLE_API_KEY || "").trim();
+    if (!key) {
+      return res.json({ count: all.length, appId, lang, summary: fallback, sample });
+    }
+
+    let summary = fallback;
+
+    try {
+      const toText = (rv) =>
+        `[${rv.voted_up ? "Recommended" : "Not Recommended"} | Helpful:${rv.votes_up} | Playtime:${Math.round(
+          (rv.author?.playtime_forever || 0) / 60
+        )}h] ${(rv.review || "").replace(/\s+/g, " ")}`.slice(0, 1400);
+
+      const reviewTexts = all.map(toText);
+
+      const batches = [];
+      const batchSize = 60;
+      for (let i = 0; i < reviewTexts.length; i += batchSize) {
+        batches.push(reviewTexts.slice(i, i + batchSize));
+      }
+
+      const genAI = new GoogleGenerativeAI(key);
+
+      const model = genAI.getGenerativeModel({
+        model: "gemini-2.0-flash",
+        generationConfig: {
+          responseMimeType: "application/json"
+        }
+      });
+
+      const partials = [];
+      for (const [idx, batch] of batches.entries()) {
+        const prompt = buildBatchPrompt(batch, idx + 1, batches.length);
+        const resp = await model.generateContent(prompt);
+        const txt = resp.response.text();
+        const json = safeJson(txt);
+        if (json) partials.push(json);
+      }
+
+      if (partials.length) {
+        const mergePrompt = buildMergePrompt(partials, {
+          totalCount: all.length,
+          appId
+        });
+        const mergeResp = await model.generateContent(mergePrompt);
+        const merged = safeJson(mergeResp.response.text());
+        if (merged) summary = merged;
+      }
+    } catch (aiErr) {
+      console.error("AI synthesis failed, using fallback summary:", aiErr);
+    }
+
+    return res.json({ count: all.length, appId, lang, summary, sample });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Review fetch/synthesis failed." });
+    console.error("Review fetch failed:", err);
+    res.status(500).json({ error: "Review fetch failed." });
   }
 });
-
-/* ------------------------------ Helpers ------------------------------ */
-
-function buildBatchPrompt(reviews, batchIndex, totalBatches) {
-  return [
-    `You are analyzing Steam user reviews for a video game (batch ${batchIndex} of ${totalBatches}).`,
-    `Each line is one review with a header like: [Recommended|Not Recommended | Helpful:N | Playtime:Nh] text...`,
-    ``,
-    `GOAL: Produce a compact JSON summary capturing sentiment, common themes, pros, cons,`,
-    `average playtime sentiment relationship (if visible), and top keywords. Avoid quoting long text.`,
-    ``,
-    `Return ONLY a single JSON object with this schema:`,
-    `{
-      "positivity": number,              // 0..1 fraction of positive-sounding reviews in this batch
-      "pros": string[],                  // up to 6 short bullets
-      "cons": string[],                  // up to 6 short bullets
-      "themes": string[],                // 4–8 recurring topics (e.g., "co-op", "optimization", "story")
-      "topKeywords": string[],           // 10–20 single words or short phrases
-      "avgPlaytimeHoursObserved": number // rough average playtime mentioned/seen in headers
-    }`,
-    ``,
-    `REVIEWS:\n${reviews.join("\n")}`
-  ].join("\n");
-}
-
-function buildMergePrompt(partials, meta) {
-  return [
-    `You are merging ${partials.length} batch summaries of Steam game reviews into one final JSON summary.`,
-    `Total reviews fetched: ${meta.totalCount}. Game appId: ${meta.appId}.`,
-    ``,
-    `INPUT_PARTIALS_JSON =`,
-    JSON.stringify(partials),
-    ``,
-    `TASK: Merge the partials. Weigh items by their implied frequency and consistency.`,
-    `Compute a final positivity (0..1), verdict label, overall string (e.g., "78% positive (X/Y recent reviews)"),`,
-    `top themes, concise pros/cons (max 6 each), top keywords, and a rough average playtime.`,
-    ``,
-    `Verdict scale to use:
-      - "Overwhelmingly Positive" (>=0.85)
-      - "Very Positive"          (>=0.75)
-      - "Mostly Positive"        (>=0.65)
-      - "Somewhat Positive"      (>=0.55)
-      - "Mixed"                  (>=0.45)
-      - "Somewhat Negative"      (>=0.35)
-      - "Mostly Negative"        (>=0.25)
-      - "Very Negative"          (<0.25)`,
-    ``,
-    `Return ONLY JSON with this schema (no markdown, no commentary):`,
-    `{
-      "overall": string,           // e.g., "78% positive (156/200 recent reviews)"
-      "verdict": string,           // one of the labels above
-      "positivity": number,        // 0..1
-      "playtimeAvgHrs": number,    // rounded to 0.1
-      "pros": string[],            // up to 6
-      "cons": string[],            // up to 6
-      "themes": string[],          // 6–10 short phrases
-      "topKeywords": string[]      // 10–20 concise tokens/phrases
-    }`
-  ].join("\n");
-}
-
-function safeJson(txt) {
-  try {
-    // strip code fences if any
-    const cleaned = txt.trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
-    return JSON.parse(cleaned);
-  } catch {
-    return null;
-  }
-}
-
 
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);

@@ -1,4 +1,5 @@
 const $ = (id) => document.getElementById(id);
+
 const resultsEl = $("results");
 const emptyEl = $("empty");
 const overviewEl = $("overview");
@@ -8,9 +9,29 @@ const keywordsEl = $("keywords");
 const samplesEl = $("samples");
 const searchBtn = $("searchBtn");
 const queryInput = $("query");
+const langSelect = $("lang");
+
+let lastGame = null;
 
 searchBtn.addEventListener("click", () => doSearch());
-queryInput.addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); });
+queryInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") doSearch();
+});
+
+langSelect?.addEventListener("change", () => {
+  if (lastGame) fetchReviews(lastGame);
+});
+
+function langLabel(code) {
+  const map = {
+    english: "English",
+    spanish: "Spanish",
+    schinese: "Chinese (Simplified)",
+    portuguese: "Portuguese",
+    russian: "Russian"
+  };
+  return map[code] || code || "English";
+}
 
 async function doSearch() {
   const term = queryInput.value.trim();
@@ -54,13 +75,19 @@ async function doSearch() {
 }
 
 async function fetchReviews(game) {
+  lastGame = game;
+
+  const lang = (langSelect?.value || "english").trim();
+
   overviewEl.innerHTML = "Fetching recent reviews… (AI synthesis running)";
   prosEl.innerHTML = "";
   consEl.innerHTML = "";
   keywordsEl.innerHTML = "";
   samplesEl.innerHTML = "";
 
-  const res = await fetch(`/api/reviews?appId=${game.appid}&num=300`);
+  const res = await fetch(
+    `/api/reviews?appId=${game.appid}&num=300&lang=${encodeURIComponent(lang)}`
+  );
   const data = await res.json();
 
   if (!data || !data.summary) {
@@ -69,19 +96,22 @@ async function fetchReviews(game) {
   }
 
   const s = data.summary;
+  const usedLang = data.lang || (langSelect?.value || "english").trim();
+
 
   overviewEl.innerHTML = `
-    <div class="stat"><div class="k">Game</div><div class="v">${game.name}</div></div>
+    <div class="stat"><div class="k">Game</div><div class="v">${escapeHtml(game.name)}</div></div>
+    <div class="stat"><div class="k">Language</div><div class="v">${escapeHtml(langLabel(lang))}</div></div>
     <div class="divider"></div>
-    <div class="stat"><div class="k">Overall</div><div class="v">${s.overall}</div></div>
-    <div class="stat"><div class="k">Verdict</div><div class="v">${s.verdict}</div></div>
-    <div class="stat"><div class="k">Avg. playtime (hrs)</div><div class="v">${s.playtimeAvgHrs || "–"}</div></div>
+    <div class="stat"><div class="k">Overall</div><div class="v">${escapeHtml(s.overall)}</div></div>
+    <div class="stat"><div class="k">Verdict</div><div class="v">${escapeHtml(s.verdict)}</div></div>
+    <div class="stat"><div class="k">Avg. playtime (hrs)</div><div class="v">${s.playtimeAvgHrs ?? "–"}</div></div>
     <div class="small">AI summary generated from ${data.count} recent reviews.</div>
   `;
 
   // Keywords
   keywordsEl.innerHTML = (s.topKeywords || [])
-    .map((k) => `<span class="pill">${k}</span>`)
+    .map((k) => `<span class="pill">${escapeHtml(k)}</span>`)
     .join("");
 
   // Pros/Cons
@@ -109,7 +139,7 @@ function listify(arr, cls) {
 }
 
 function escapeHtml(s) {
-  return s
+  return (s || "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");

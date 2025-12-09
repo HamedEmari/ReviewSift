@@ -19,6 +19,14 @@
     .search {
       display: flex; gap: 8px; width: 100%; max-width: 720px;
     }
+    .search select {
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid #1f2937;
+      background: #0b1220;
+      color: var(--ink);
+      outline: none;
+    }
     .search input {
       flex: 1; padding: 12px 14px; border-radius: 12px; border: 1px solid #1f2937;
       background: #0b1220; color: var(--ink); outline: none;
@@ -75,8 +83,16 @@
 </head>
 <body>
   <header>
-    <h1>🎮 Steam Review Synthesizer</h1>
+    <h1>🎮 ReviewSwift</h1>
     <div class="search">
+      <select id="lang" aria-label="Review language">
+        <option value="english" selected>English</option>
+        <option value="spanish">Spanish</option>
+        <option value="schinese">Chinese (Simplified)</option>
+        <option value="portuguese">Portuguese</option>
+        <option value="russian">Russian</option>
+      </select>
+
       <input id="query" placeholder="Type a Steam game (e.g., Baldur's Gate 3)" />
       <button id="searchBtn">Search</button>
     </div>
