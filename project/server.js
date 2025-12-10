@@ -13,6 +13,9 @@ const __dirname = path.dirname(__filename);
 const app = express();
 app.use(cors());
 app.use(express.static(path.join(__dirname, "public")));
+app.use(express.json());
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+
 
 const PORT = process.env.PORT || 3000;
 
@@ -306,10 +309,10 @@ app.get("/api/reviews", async (req, res) => {
           (rv.author?.playtime_forever || 0) / 60
         )}h] ${(rv.review || "").replace(/\s+/g, " ")}`.slice(0, 1400);
 
-      const reviewTexts = all.map(toText);
+      const reviewTexts = all.map(toText).slice(0, 80);
 
       const batches = [];
-      const batchSize = 60;
+      const batchSize = 50;
       for (let i = 0; i < reviewTexts.length; i += batchSize) {
         batches.push(reviewTexts.slice(i, i + batchSize));
       }
@@ -351,6 +354,65 @@ app.get("/api/reviews", async (req, res) => {
     res.status(500).json({ error: "Review fetch failed." });
   }
 });
+
+app.post("/api/art", async (req, res) => {
+  try {
+    const key = (process.env.GOOGLE_API_KEY || "").trim();
+    if (!key) {
+      console.error("No GOOGLE_API_KEY found in env for /api/art");
+      return res.status(500).json({ error: "Server missing AI key." });
+    }
+
+    const { appId, name, verdict, positivity, themes = [], topKeywords = [], pros = [], cons = [] } = req.body || {};
+    if (!name) return res.status(400).json({ error: "Missing game name." });
+
+    const themesText = themes.slice(0, 4).join(", ");
+    const keywordsText = topKeywords.slice(0, 10).join(", ");
+    const prosText = pros.slice(0, 3).join("; ");
+    const consText = cons.slice(0, 2).join("; ");
+
+    const p = typeof positivity === "number" ? positivity : 0.5;
+    let mood = "balanced, neutral mood";
+    if (p >= 0.8) mood = "very positive, triumphant, vibrant mood";
+    else if (p >= 0.6) mood = "optimistic, adventurous mood";
+    else if (p < 0.4) mood = "dark, moody, tense atmosphere";
+
+    const prompt = [
+      `Create a cinematic digital illustration.`,
+      `Do not include text.`,
+      `Mood: ${mood}`,
+      themesText ? `Themes: ${themesText}` : "",
+      keywordsText ? `Keywords: ${keywordsText}` : "",
+      prosText ? `Players praise: ${prosText}` : "",
+      consText ? `Players complain about: ${consText}` : ""
+    ].filter(Boolean).join("\n");
+
+    const genAI = new GoogleGenerativeAI(key);
+
+    const imageModel = genAI.getGenerativeModel({
+      model: "gemini-2.0-flash-exp",
+      generationConfig: { responseModalities: ["Text", "Image"] }
+    });
+
+    const resp = await imageModel.generateContent(prompt);
+    const parts = resp.response?.candidates?.[0]?.content?.parts || [];
+    const imagePart = parts.find(p => p.inlineData && p.inlineData.data);
+    if (!imagePart) {
+      console.error("No inlineData image returned from Gemini");
+      return res.status(500).json({ error: "Image generation failed." });
+    }
+
+    const base64 = imagePart.inlineData.data;
+    const mime = imagePart.inlineData.mimeType || "image/png";
+    res.json({ appId, name, imageUrl: `data:${mime};base64,${base64}` });
+  } catch (err) {
+    console.error("AI art generation failed:", err);
+    res.status(500).json({ error: "AI art generation failed." });
+  }
+});
+
+
+
 
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);

@@ -10,6 +10,11 @@ const samplesEl = $("samples");
 const searchBtn = $("searchBtn");
 const queryInput = $("query");
 const langSelect = $("lang");
+const genPosterBtn = document.getElementById("genPosterBtn");
+const aiArtEl = document.getElementById("aiArt");
+let currentGame = null;
+let currentSummary = null;
+
 
 let lastGame = null;
 
@@ -17,6 +22,15 @@ searchBtn.addEventListener("click", () => doSearch());
 queryInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") doSearch();
 });
+
+genPosterBtn.addEventListener("click", () => {
+  if (!currentGame || !currentSummary) {
+    aiArtEl.innerHTML = "<div>Select a game first.</div>";
+    return;
+  }
+  generatePoster(currentGame, currentSummary);
+});
+
 
 langSelect?.addEventListener("change", () => {
   if (lastGame) fetchReviews(lastGame);
@@ -76,6 +90,9 @@ async function doSearch() {
 
 async function fetchReviews(game) {
   lastGame = game;
+  currentGame = game;
+  currentSummary = null;
+  aiArtEl.innerHTML = "";
 
   const lang = (langSelect?.value || "english").trim();
 
@@ -109,14 +126,19 @@ async function fetchReviews(game) {
     <div class="small">AI summary generated from ${data.count} recent reviews.</div>
   `;
 
+  currentSummary = s;
+
   // Keywords
   keywordsEl.innerHTML = (s.topKeywords || [])
     .map((k) => `<span class="pill">${escapeHtml(k)}</span>`)
     .join("");
 
   // Pros/Cons
-  prosEl.innerHTML = listify(s.pros, "pos");
-  consEl.innerHTML = listify(s.cons, "neg");
+  const pros = (s.pros || []).slice(0, 6);
+  const cons = (s.cons || []).slice(0, 6);
+
+  prosEl.innerHTML = listify(pros, "pos");
+  consEl.innerHTML = listify(cons, "neg");
 
   // Samples
   samplesEl.innerHTML = (data.sample || [])
@@ -144,3 +166,44 @@ function escapeHtml(s) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
 }
+async function generatePoster(game, summary) {
+  aiArtEl.innerHTML = '<div class="small">Generating AI poster…</div>';
+
+  try {
+    const res = await fetch("/api/art", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        appId: game.appid,
+        name: game.name,
+        verdict: summary.verdict,
+        positivity: summary.positivity,
+        themes: summary.themes,
+        topKeywords: summary.topKeywords,
+        pros: summary.pros,
+        cons: summary.cons
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      console.error("AI art API error:", res.status, err);
+      aiArtEl.innerHTML = '<div class="small">Image API error.</div>';
+      return;
+    }
+
+    const data = await res.json();
+
+    if (!data.imageUrl) {
+      console.error("AI art response missing imageUrl:", data);
+      aiArtEl.innerHTML = '<div class="small">No image returned.</div>';
+      return;
+    }
+
+    aiArtEl.innerHTML = `<img src="${data.imageUrl}" alt="AI vibe poster" />`;
+  } catch (err) {
+    console.error("AI art fetch failed:", err);
+    aiArtEl.innerHTML = '<div class="small">Failed to generate image.</div>';
+  }
+}
+

@@ -79,6 +79,20 @@
     .badge { font-size: 11px; padding: 3px 8px; border-radius: 999px; border: 1px solid #1f2937; }
     .badge.pos { border-color:#14532d; background:#052e16; color:#86efac; }
     .badge.neg { border-color:#7f1d1d; background:#2a0b0b; color:#fca5a5; }
+
+    .ai-art {
+  min-height: 140px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ai-art img {
+  max-width: 100%;
+  border-radius: 12px;
+  border: 1px solid #1f2937;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+}
+
   </style>
 </head>
 <body>
@@ -112,9 +126,25 @@
       </div>
 
       <div class="card">
-        <h2 class="section-title">Top Keywords</h2>
-        <div id="keywords"></div>
-      </div>
+  <h2 class="section-title">Top Keywords</h2>
+  <div id="keywords"></div>
+
+  <div id="aiArt" class="ai-art" style="margin-top:20px;"></div>
+
+  <button id="genPosterBtn" style="
+    padding:8px 12px;
+    border-radius:999px;
+    border:1px solid #1f2937;
+    background:#020617;
+    color:#e5e7eb;
+    font-size:12px;
+    cursor:pointer;
+    margin-top:12px;
+  ">
+    Generate AI Vibe Poster
+  </button>
+</div>
+
     </div>
 
     <div class="row">
